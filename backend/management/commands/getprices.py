@@ -8,6 +8,17 @@ from django.db.utils import IntegrityError
 class Command(BaseCommand):
     help = 'Obtém preços dos produtos da loja e os salva no banco de dados'
 
+    def get_price(self, price_tag):
+        # converte o preço de string pra decimal
+        if price_tag:
+            price_str = price_tag.find('span', class_='price').get_text(strip=True)
+            if price_str:
+                try:
+                    return Decimal(price_str.replace("R$", "").replace(",", ".").strip())
+                except (ValueError, TypeError):
+                    return None
+        return None
+
     def handle(self, *args, **kwargs):
         url_alimentosbasicos = "https://www.amigao.com/maringa/alimentos-basicos"
         payload = {
@@ -21,8 +32,17 @@ class Command(BaseCommand):
         }
 
         response = requests.get(url_alimentosbasicos, json=payload, headers=headers)
+
+        if response.status_code != 200:
+            self.stdout.write(self.style.ERROR(f"Falha na requisição: {response.status_code}"))
+            return
+
         soup = BeautifulSoup(response.text, 'html.parser')
         product_items = soup.find_all('li', class_='product-item')
+
+        if not product_items:
+            self.stdout.write(self.style.WARNING("Nenhum produto encontrado na página."))
+            return
 
         # categoria e loja
         category = "alimentos-basicos"
@@ -30,71 +50,54 @@ class Command(BaseCommand):
 
         for item in product_items:
             a_tag = item.find('a', class_='product-item-link')
-            if a_tag:
-                name_product = a_tag.get_text(strip=True)
-            else:
-                name_product = "Nome não encontrado"
+            name_product = a_tag.get_text(strip=True) if a_tag else "Nome não encontrado"
 
-            # ID do produto
             form_tag = item.find('form', attrs={'data-product-sku': True})
             if not form_tag:
-                continue 
+                continue
             sku = form_tag.get('data-product-sku')
 
-            # preços
-            special_price_tag = item.find('span', class_='special-price')
-            if special_price_tag:
-                special_price_str = special_price_tag.find('span', class_='price').get_text(strip=True)
-                special_price = Decimal(special_price_str.replace("R$", "").replace(",", ".").strip())
-            else:
-                special_price = None
-
-            old_price_tag = item.find('span', class_='old-price')
-            if old_price_tag:
-                old_price_str = old_price_tag.find('span', class_='price').get_text(strip=True)
-                old_price = Decimal(old_price_str.replace("R$", "").replace(",", ".").strip())
-            else:
-                old_price = None
-
-            final_price_tag = item.find('span', class_='price-wrapper')
-            if final_price_tag:
-                final_price_str = final_price_tag.find('span', class_='price').get_text(strip=True)
-                final_price = Decimal(final_price_str.replace("R$", "").replace(",", ".").strip())
-            else:
-                final_price = None
+            # extração de preços
+            special_price = self.get_price(item.find('span', class_='special-price'))
+            old_price = self.get_price(item.find('span', class_='old-price'))
+            final_price = self.get_price(item.find('span', class_='price-wrapper'))
 
             # lógica de preços
             if special_price:
-                default_price = old_price 
-                offer_price = special_price 
-                offer = True 
+                default_price = old_price
+                offer_price = special_price
+                offer = True
             else:
-                default_price = final_price if final_price else old_price 
-                offer_price = None  
-                offer = False 
+                default_price = final_price if final_price else old_price
+                offer_price = None
+                offer = False
 
             try:
+                # verifica se o produto ja existe 
                 product, created = Product.objects.get_or_create(
                     id=sku,
-                    defaults={
-                        "description": name_product,
-                        "store": store,
-                    }
+                    defaults={"description": name_product, "store": store}
                 )
+
                 if created:
                     self.stdout.write(self.style.SUCCESS(f"Produto criado --> {name_product} (SKU: {sku})"))
                 else:
-                    self.stdout.write(self.style.SUCCESS(f"Produto já existe: {name_product} (SKU: {sku})"))
+                    # atualiza o produto se necessario
+                    product.description = name_product
+                    product.store = store
+                    product.save()
+                    self.stdout.write(self.style.SUCCESS(f"Produto atualizado --> {name_product} (SKU: {sku})"))
+
             except IntegrityError as e:
-                self.stdout.write(self.style.ERROR(f"Erro ao criar produto: {e}"))
+                self.stdout.write(self.style.ERROR(f"Erro ao criar ou atualizar produto: {e}"))
                 continue
 
-            # Criar histórico para o produto
+            # save
             History.objects.create(
                 default_price=default_price,
                 offer_price=offer_price,
                 offer=offer,
                 category=category,
             )
-        
+
         self.stdout.write(self.style.SUCCESS('Preços dos produtos atualizados com sucesso!'))
