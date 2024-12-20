@@ -2,8 +2,9 @@ from django.core.management.base import BaseCommand
 from decimal import Decimal
 import requests
 from bs4 import BeautifulSoup
-from backend.models import Store, Product, History
 from django.db.utils import IntegrityError
+
+from backend.models import URL, History, Product, Store
 
 class Command(BaseCommand):
     help = 'Obtém preços dos produtos da loja e os salva no banco de dados'
@@ -18,9 +19,20 @@ class Command(BaseCommand):
                 except (ValueError, TypeError):
                     return None
         return None
+    
+    def get_category_from_body(self, soup):
+    # pega a categoria no <body>
+        body_tag = soup.find('body')
+        if body_tag:
+            class_attr = body_tag.get('class', [])
+            for class_name in class_attr:
+                if class_name.startswith('categorypath-'):
+                    return class_name.replace('categorypath-', '')
+        return "categoria-desconhecida"
+
 
     def handle(self, *args, **kwargs):
-        url_alimentosbasicos = "https://www.amigao.com/maringa/alimentos-basicos"
+        url = "https://www.amigao.com/maringa/bebidas/refrigerantes"
         payload = {
             "stateCode": "maringa",
             "loggedIn": "false"
@@ -31,7 +43,7 @@ class Command(BaseCommand):
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36"
         }
 
-        response = requests.get(url_alimentosbasicos, json=payload, headers=headers)
+        response = requests.get(url, json=payload, headers=headers)
 
         if response.status_code != 200:
             self.stdout.write(self.style.ERROR(f"Falha na requisição: {response.status_code}"))
@@ -45,8 +57,14 @@ class Command(BaseCommand):
             return
 
         # categoria e loja
-        category = "alimentos-basicos"
+        category = self.get_category_from_body(soup)
+        self.stdout.write(self.style.SUCCESS(f"Categoria extraída: {category}"))
         store, _ = Store.objects.get_or_create(description="Amigao")
+        # save da url
+        url_record, created = URL.objects.get_or_create(
+            store=store,
+            url=url
+        )
 
         for item in product_items:
             a_tag = item.find('a', class_='product-item-link')

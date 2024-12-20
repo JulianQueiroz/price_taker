@@ -15,7 +15,7 @@ class URLAdmin(admin.ModelAdmin):
 admin.site.register(URL, URLAdmin)
 
 class ProductAdmin(admin.ModelAdmin):
-    list_display = ('store','description',)  
+    list_display = ('id','store','description',)  
     search_fields = ('store',)  
     
     def has_add_permission(self, request):
