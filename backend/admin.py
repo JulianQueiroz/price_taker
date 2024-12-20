@@ -3,7 +3,7 @@ from django.contrib import admin
 from backend.models import URL, History, Product, Store
 
 class StoreAdmin(admin.ModelAdmin):
-    list_display = ('description',)  
+    list_display = ('id','description',)  
     search_fields = ('description',)  
     
 admin.site.register(Store, StoreAdmin)
